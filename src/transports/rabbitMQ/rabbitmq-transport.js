@@ -259,10 +259,6 @@ export class RabbitMqTransport extends Transport {
     for (const subscription of matchingSubscriptions) {
       try {
         await subscription.handler(message, ctx);
-
-        if (subscription.once) {
-          await this._removeSubscription(subscription);
-        }
       } catch (err) {
         if (subscription.onError) {
           await subscription.onError(err, message, ctx);
