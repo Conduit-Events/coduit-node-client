@@ -54,7 +54,7 @@ export default class Client {
     return this.#publish("command", type, data, options);
   }
 
-  async subscribe(type, handler, options = {}) {
+  async on(type, handler, options = {}) {
     this.#assertCanSubscribe(type, handler, options);
 
     return this.transport.subscribe(
