@@ -7,7 +7,6 @@ import {
 
 export class RabbitMqTransport extends Transport {
   constructor(config = {}) {
-    console.log(config);
     super();
     this._config = configureRabbitMqTransport(config);
 
@@ -152,7 +151,6 @@ export class RabbitMqTransport extends Transport {
 
   async ensureQueue(queueInput = {}) {
     await this.connect();
-    console.log(this._config);
     const queueOptions = configureRabbitMqQueue(this._config, queueInput);
 
     await this._assertQueueInfrastructure(queueOptions);

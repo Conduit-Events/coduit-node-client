@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import Client from "../../src/client/client.js";
+import { RabbitMqConnectionRegistry } from "../../src/transports/rabbitMQ/rabbitmq-connection-registry.js";
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL ?? "amqp://localhost";
 
@@ -30,6 +31,18 @@ describe("Client", function () {
 
   let serviceA;
   let serviceB;
+
+  afterEach(async function () {
+    await Promise.allSettled([
+      serviceA?.stop?.({ closeConnection: true }),
+      serviceB?.stop?.({ closeConnection: true }),
+    ]);
+
+    await RabbitMqConnectionRegistry.closeAll().catch(() => {});
+
+    serviceA = null;
+    serviceB = null;
+  });
 
   afterEach(async function () {
     await Promise.allSettled([serviceA?.stop?.(), serviceB?.stop?.()]);
