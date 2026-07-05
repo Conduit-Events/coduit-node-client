@@ -384,4 +384,117 @@ describe("Client", function () {
       serviceBResult.message.meta.id,
     );
   });
+
+  it("derives streamId, correlationId and causationId when a handler emits a child event", async function () {
+    const namespace = createTestId();
+
+    const parentEventType = "user.created";
+    const childEventType = "welcome-email.requested";
+
+    const streamId = "user_123";
+    const correlationId = "corr_user_signup_123";
+
+    publisher = Client.create({
+      namespace,
+      service: "publisher-service",
+      rabbitmq: {
+        url: RABBITMQ_URL,
+        connectionName: `${namespace}-publisher-service`,
+      },
+    });
+
+    serviceA = Client.create({
+      namespace,
+      service: "user-service",
+      rabbitmq: {
+        url: RABBITMQ_URL,
+        connectionName: `${namespace}-user-service`,
+      },
+    });
+
+    serviceB = Client.create({
+      namespace,
+      service: "email-service",
+      rabbitmq: {
+        url: RABBITMQ_URL,
+        connectionName: `${namespace}-email-service`,
+      },
+    });
+
+    const parentHandled = waitForMessage(
+      "user.created handled by user-service",
+    );
+    const childReceived = waitForMessage(
+      "welcome-email.requested received by email-service",
+    );
+
+    await publisher.start();
+    await serviceA.start();
+    await serviceB.start();
+
+    await serviceB.on(childEventType, async (message, ctx) => {
+      childReceived.resolve({
+        message,
+        routingKey: ctx.routingKey,
+      });
+    });
+
+    await serviceA.on(parentEventType, async (message, ctx) => {
+      parentHandled.resolve({
+        message,
+        routingKey: ctx.routingKey,
+      });
+
+      await ctx.emit(childEventType, {
+        userId: message.data.userId,
+        email: message.data.email,
+      });
+    });
+
+    await publisher.emit(
+      parentEventType,
+      {
+        userId: "user_123",
+        email: "janx@example.com",
+      },
+      {
+        streamId,
+        correlationId,
+      },
+    );
+
+    const [parentResult, childResult] = await Promise.all([
+      parentHandled.promise,
+      childReceived.promise,
+    ]);
+
+    const parentMessage = parentResult.message;
+    const childMessage = childResult.message;
+
+    expect(parentMessage.meta.type).to.equal(parentEventType);
+    expect(parentMessage.meta.source).to.equal("publisher-service");
+    expect(parentMessage.meta.streamId).to.equal(streamId);
+    expect(parentMessage.meta.correlationId).to.equal(correlationId);
+    expect(parentMessage.meta.causationId).to.equal(undefined);
+
+    expect(childMessage.meta.type).to.equal(childEventType);
+    expect(childMessage.meta.source).to.equal("user-service");
+
+    expect(childMessage.data).to.deep.equal({
+      userId: "user_123",
+      email: "janx@example.com",
+    });
+
+    expect(childMessage.meta.streamId).to.equal(parentMessage.meta.streamId);
+    expect(childMessage.meta.correlationId).to.equal(
+      parentMessage.meta.correlationId,
+    );
+    expect(childMessage.meta.causationId).to.equal(parentMessage.meta.id);
+
+    expect(childMessage.meta.id).to.be.a("string");
+    expect(childMessage.meta.id).to.not.equal(parentMessage.meta.id);
+
+    expect(parentResult.routingKey).to.equal(parentEventType);
+    expect(childResult.routingKey).to.equal(childEventType);
+  });
 });
