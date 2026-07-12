@@ -34,40 +34,25 @@ export default class Client {
     this._subscriptions = new Map();
     this._subscriptionId = 0;
     this._state = "stopped";
+    this._starting = null;
+    this._stopping = null;
   }
 
   static create(...args) {
     return new this(...args);
   }
+
   async start() {
-    if (this._state === "started") return this;
-    if (this._state === "starting") return this._starting;
+    if (this._state === "started") {
+      return this;
+    }
+
+    if (this._state === "starting") {
+      return this._starting;
+    }
 
     this._state = "starting";
-
-    this._starting = (async () => {
-      try {
-        await this.transport.connect();
-
-        for (const subscription of this._subscriptions.values()) {
-          await this.#activateSubscription(subscription);
-        }
-
-        this._state = "started";
-        return this;
-      } catch (error) {
-        await this.transport.disconnect().catch(() => {});
-
-        for (const subscription of this._subscriptions.values()) {
-          subscription.active = false;
-          subscription.transportSubscription = null;
-          subscription.ready = Promise.resolve();
-        }
-
-        this._state = "failed";
-        throw error;
-      }
-    })();
+    this._starting = this.#start();
 
     try {
       return await this._starting;
@@ -75,23 +60,82 @@ export default class Client {
       this._starting = null;
     }
   }
+
+  async #start() {
+    try {
+      await this.transport.connect();
+
+      for (const subscription of this._subscriptions.values()) {
+        subscription.ready = this.#activateSubscription(subscription);
+
+        await subscription.ready;
+      }
+
+      this._state = "started";
+
+      return this;
+    } catch (startError) {
+      let cleanupError;
+
+      try {
+        await this.transport.disconnect();
+      } catch (error) {
+        cleanupError = error;
+      }
+
+      this.#resetSubscriptionRuntimeState();
+
+      if (cleanupError) {
+        this._state = "failed";
+
+        throw new AggregateError(
+          [startError, cleanupError],
+          "Client startup failed and cleanup also failed",
+        );
+      }
+
+      this._state = "stopped";
+
+      throw startError;
+    }
+  }
+
   async stop(options = {}) {
     if (this._state === "stopped") {
       return this;
     }
 
+    if (this._state === "stopping") {
+      return this._stopping;
+    }
+
     this._state = "stopping";
+    this._stopping = this.#stop(options);
 
-    await this.transport.disconnect(options);
+    try {
+      return await this._stopping;
+    } finally {
+      this._stopping = null;
+    }
+  }
 
+  async #stop(options) {
+    try {
+      await this.transport.disconnect(options);
+    } finally {
+      this.#resetSubscriptionRuntimeState();
+      this._state = "stopped";
+    }
+
+    return this;
+  }
+
+  #resetSubscriptionRuntimeState() {
     for (const subscription of this._subscriptions.values()) {
       subscription.active = false;
       subscription.transportSubscription = null;
       subscription.ready = Promise.resolve();
     }
-
-    this._state = "stopped";
-    return this;
   }
 
   async emit(type, data, options = {}) {

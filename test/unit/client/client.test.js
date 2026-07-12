@@ -193,6 +193,44 @@ describe("Client", function () {
 
       await expectAsyncError(client.start(), "Subscription activation failed");
     });
+
+    it("cleans up and can retry after subscription activation fails", async function () {
+      const transport = createFakeTransport();
+
+      let activationCalls = 0;
+
+      transport.subscribeImpl = async () => {
+        activationCalls += 1;
+
+        if (activationCalls === 2) {
+          throw new Error("Subscription activation failed");
+        }
+
+        return createRuntimeSubscription();
+      };
+
+      const { client } = createClient({ transport });
+
+      client.on("user.created", async () => {});
+      client.on("user.updated", async () => {});
+
+      await expectAsyncError(client.start(), "Subscription activation failed");
+
+      expect(transport.disconnectCalls).to.deep.equal([{}]);
+
+      transport.subscribeImpl = async () => createRuntimeSubscription();
+
+      await client.start();
+
+      expect(transport.connectCalls).to.equal(2);
+
+      expect(transport.subscribeCalls.map(({ type }) => type)).to.deep.equal([
+        "user.created",
+        "user.updated",
+        "user.created",
+        "user.updated",
+      ]);
+    });
   });
 
   describe("stop", function () {
@@ -256,6 +294,31 @@ describe("Client", function () {
 
       expect(transport.subscribeCalls).to.have.length(2);
       expect(transport.subscribeCalls[1].type).to.equal("user.created");
+    });
+
+    it("returns to stopped state when transport disconnect fails", async function () {
+      const transport = createFakeTransport();
+      const { client } = createClient({ transport });
+
+      client.on("user.created", async () => {});
+
+      await client.start();
+
+      transport.disconnectError = new Error("Transport disconnect failed");
+
+      await expectAsyncError(client.stop(), "Transport disconnect failed");
+
+      await expectAsyncError(
+        client.emit("user.created", {}),
+        "Client must be started before it can broadcast events.",
+      );
+
+      transport.disconnectError = null;
+
+      await client.start();
+
+      expect(transport.connectCalls).to.equal(2);
+      expect(transport.subscribeCalls).to.have.length(2);
     });
   });
 
