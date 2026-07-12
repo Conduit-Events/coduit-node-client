@@ -728,4 +728,115 @@ describe("RabbitMqTransport", function () {
     expect(RabbitMqConnectionRegistry.references("main")).to.equal(0);
     expect(fakeBrokerConnection.closeCalls).to.equal(1);
   });
+
+  it("cleans up partial channels when connection setup fails", async function () {
+    const fakeBrokerConnection = createFakeAmqpConnection();
+
+    fakeBrokerConnection.createChannel = async function () {
+      throw new Error("Consume channel creation failed");
+    };
+
+    const fakeAmqp = {
+      async connect() {
+        return fakeBrokerConnection;
+      },
+    };
+
+    const transport = createRegistryTransport({
+      fakeAmqp,
+    });
+
+    await expectAsyncError(
+      transport.connect(),
+      "Consume channel creation failed",
+    );
+
+    expect(fakeBrokerConnection.confirmChannels).to.have.length(1);
+
+    expect(fakeBrokerConnection.confirmChannels[0].closeCalls).to.equal(1);
+
+    expect(RabbitMqConnectionRegistry.references("main")).to.equal(0);
+
+    expect(RabbitMqConnectionRegistry.has("main")).to.equal(false);
+
+    expect(fakeBrokerConnection.closeCalls).to.equal(1);
+  });
+
+  it("continues disconnect cleanup when consumer cancellation fails", async function () {
+    const fakeBrokerConnection = createFakeAmqpConnection();
+
+    const fakeAmqp = {
+      async connect() {
+        return fakeBrokerConnection;
+      },
+    };
+
+    const transport = createRegistryTransport({
+      fakeAmqp,
+    });
+
+    await transport.subscribe("user.created", async () => {}, {
+      consumerTag: "email-consumer",
+    });
+
+    const publishChannel = fakeBrokerConnection.confirmChannels[0];
+
+    const consumeChannel = fakeBrokerConnection.normalChannels[0];
+
+    consumeChannel.cancel = async function (consumerTag) {
+      this.cancelCalls.push(consumerTag);
+      throw new Error("Consumer cancellation failed");
+    };
+
+    await expectAsyncError(
+      transport.disconnect(),
+      "Consumer cancellation failed",
+    );
+
+    expect(consumeChannel.cancelCalls).to.deep.equal(["email-consumer"]);
+
+    expect(publishChannel.closeCalls).to.equal(1);
+    expect(consumeChannel.closeCalls).to.equal(1);
+
+    expect(RabbitMqConnectionRegistry.references("main")).to.equal(0);
+
+    expect(fakeBrokerConnection.closeCalls).to.equal(1);
+  });
+
+  it("releases the registry lease when a channel close fails", async function () {
+    const fakeBrokerConnection = createFakeAmqpConnection();
+
+    const fakeAmqp = {
+      async connect() {
+        return fakeBrokerConnection;
+      },
+    };
+
+    const transport = createRegistryTransport({
+      fakeAmqp,
+    });
+
+    await transport.connect();
+
+    const publishChannel = fakeBrokerConnection.confirmChannels[0];
+
+    const consumeChannel = fakeBrokerConnection.normalChannels[0];
+
+    publishChannel.close = async function () {
+      this.closeCalls += 1;
+      throw new Error("Publish channel close failed");
+    };
+
+    await expectAsyncError(
+      transport.disconnect(),
+      "Publish channel close failed",
+    );
+
+    expect(publishChannel.closeCalls).to.equal(1);
+    expect(consumeChannel.closeCalls).to.equal(1);
+
+    expect(RabbitMqConnectionRegistry.references("main")).to.equal(0);
+
+    expect(fakeBrokerConnection.closeCalls).to.equal(1);
+  });
 });

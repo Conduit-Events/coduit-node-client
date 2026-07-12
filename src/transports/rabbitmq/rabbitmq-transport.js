@@ -26,8 +26,12 @@ export class RabbitMqTransport extends Transport {
   }
 
   async connect() {
-    if (this._publishChannel && this._consumeChannel) {return;}
-    if (this._connecting) {return this._connecting;}
+    if (this._publishChannel && this._consumeChannel) {
+      return;
+    }
+    if (this._connecting) {
+      return this._connecting;
+    }
 
     this._connecting = this.#connect();
 
@@ -50,12 +54,19 @@ export class RabbitMqTransport extends Transport {
 
       this._registryLeaseActive = true;
     }
-
     try {
       await this._connectChannels();
-    } catch (error) {
-      await this.#releaseRegistryConnection();
-      throw error;
+    } catch (connectError) {
+      try {
+        await this.disconnect();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [connectError, cleanupError],
+          "RabbitMQ connection setup failed and cleanup also failed",
+        );
+      }
+
+      throw connectError;
     }
   }
 
@@ -95,30 +106,59 @@ export class RabbitMqTransport extends Transport {
   }
 
   async disconnect() {
-    for (const consumer of this._consumersByQueue.values()) {
-      if (this._consumeChannel) {
-        await this._consumeChannel.cancel(consumer.consumerTag);
-      }
-    }
+    const errors = [];
+
+    const publishChannel = this._publishChannel;
+    const consumeChannel = this._consumeChannel;
+    const consumers = [...this._consumersByQueue.values()];
+
+    // Clear runtime state immediately so repeated disconnect calls are safe,
+    // even when one of the cleanup operations below fails.
+    this._publishChannel = null;
+    this._consumeChannel = null;
 
     this._consumersByQueue.clear();
     this._subscriptionsByQueue.clear();
 
-    if (this._publishChannel) {
-      await this._publishChannel.close();
-      this._publishChannel = null;
+    if (consumeChannel) {
+      for (const consumer of consumers) {
+        await this.#attemptCleanup(errors, () =>
+          consumeChannel.cancel(consumer.consumerTag),
+        );
+      }
     }
 
-    if (this._consumeChannel) {
-      await this._consumeChannel.close();
-      this._consumeChannel = null;
+    if (publishChannel) {
+      await this.#attemptCleanup(errors, () => publishChannel.close());
     }
 
-    await this.#releaseRegistryConnection();
+    if (consumeChannel) {
+      await this.#attemptCleanup(errors, () => consumeChannel.close());
+    }
+
+    await this.#attemptCleanup(errors, () => this.#releaseRegistryConnection());
+
+    if (errors.length === 1) {
+      throw errors[0];
+    }
+
+    if (errors.length > 1) {
+      throw new AggregateError(errors, "RabbitMQ transport cleanup failed");
+    }
+  }
+
+  async #attemptCleanup(errors, action) {
+    try {
+      await action();
+    } catch (error) {
+      errors.push(error);
+    }
   }
 
   async #releaseRegistryConnection() {
-    if (!this._usesRegistry || !this._registryLeaseActive) {return;}
+    if (!this._usesRegistry || !this._registryLeaseActive) {
+      return;
+    }
 
     const connection = this._connection;
 
