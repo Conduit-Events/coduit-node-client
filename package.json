@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
-  "author": "Janco Yspeert",
+  "author": "Janco Yspeert (janco.h.yspeert@gmail.com)",
   "license": "MIT",
   "dependencies": {
     "ajv": "^8.20.0",
