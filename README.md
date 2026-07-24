@@ -265,7 +265,7 @@ Events and commands currently use the same RabbitMQ exchange and routing model. 
 
 ## Message envelope
 
-The canonical language-neutral envelope specification and JSON Schema are documented in [`protocol/`](./protocol/README.md).
+The canonical language-neutral envelope specification and JSON Schema are documented in the [`conduit-protocol`](https://github.com/Conduit-Events/conduit-protocol) repository, which this client depends on directly.
 Every published message has the following shape:
 
 ```json
@@ -761,12 +761,6 @@ The most important work before a stable release is:
 ## Project structure
 
 ```text
-protocol/
-├── README.md
-├── schemas/
-│   └── conduit-message.schema.json
-└── transports/
-    └── rabbitmq.md
 src/
 ├── client/
 │   └── client.js
@@ -787,6 +781,8 @@ test/
 ├── unit/
 └── integration/
 ```
+
+The message-envelope protocol itself — schema, transport-binding docs, conformance fixtures — is not part of this repo. It's consumed as a dependency from [`conduit-protocol`](https://github.com/Conduit-Events/conduit-protocol).
 
 ## Design principles
 

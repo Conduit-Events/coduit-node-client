@@ -17,6 +17,7 @@
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "amqplib": "^2.0.1",
+    "conduit-protocol": "github:Conduit-Events/conduit-protocol#main",
     "uuid": "^14.0.1"
   },
   "devDependencies": {
